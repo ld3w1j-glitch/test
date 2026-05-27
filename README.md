@@ -1,13 +1,13 @@
-# Contador por Foto - Flask + OpenCV
+# Contador de Pessoas por Foto - Flask + OpenCV
 
-Aplicativo web para contar objetos em uma foto usando Python, Flask e OpenCV.
+Aplicativo web para contar pessoas em uma foto usando Python, Flask e OpenCV.
 
 ## O que ele faz
 
 - Abre uma página web pelo navegador.
 - Permite enviar foto ou capturar pela câmera.
 - Processa a imagem com OpenCV.
-- Conta objetos separados usando contornos.
+- Conta pessoas separados usando contornos.
 - Mostra a imagem marcada com número em cada item.
 - Mostra a máscara usada na leitura.
 - Permite ajustar sensibilidade, área mínima, área máxima, suavização e tipo de contraste.
@@ -16,13 +16,13 @@ Aplicativo web para contar objetos em uma foto usando Python, Flask e OpenCV.
 
 Este app usa contagem por contraste/contorno. Ele funciona melhor quando:
 
-- os objetos estão separados;
+- os pessoas estão separados;
 - existe contraste entre objeto e fundo;
 - a foto está bem iluminada;
 - não existem sombras fortes;
 - os itens não estão empilhados ou grudados.
 
-Para contar objetos grudados, frutas empilhadas, pães muito próximos, parafusos amontoados etc., o ideal é treinar um modelo de IA, como YOLO, com fotos reais dos seus itens.
+Para contar pessoas grudados, frutas empilhadas, pães muito próximos, parafusos amontoados etc., o ideal é treinar um modelo de IA, como YOLO, com fotos reais dos seus itens.
 
 ## Instalação no Windows
 
@@ -107,13 +107,13 @@ O navegador pode mostrar aviso de certificado, porque é um certificado temporá
 
 ## Como melhorar a precisão
 
-- Use fundo branco para objetos escuros.
-- Use fundo preto para objetos claros.
-- Espalhe os objetos sem encostar.
+- Use fundo branco para pessoas escuros.
+- Use fundo preto para pessoas claros.
+- Espalhe os pessoas sem encostar.
 - Evite sombra.
 - Tire a foto de cima.
 - Ajuste `Área mínima` para remover sujeira/ruído.
-- Diminua `Área mínima` se objetos pequenos não forem contados.
+- Diminua `Área mínima` se pessoas pequenos não forem contados.
 - Use `Misturado / iluminação irregular` quando a luz estiver ruim.
 
 ## Arquivos principais

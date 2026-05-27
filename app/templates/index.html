@@ -3,16 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Contador por Foto</title>
+  <title>Contador de Pessoas por Foto</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
   <header class="topbar">
     <div>
-      <h1>Contador por Foto</h1>
-      <p>Use a câmera do celular ou envie uma imagem para contar objetos visíveis.</p>
+      <h1>Contador de Pessoas por Foto</h1>
+      <p>Use a câmera do celular ou envie uma imagem para contar apenas pessoas.</p>
     </div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><a class="qr-shortcut" href="{{ url_for('main.qr_page') }}">Mostrar QR Code</a><span class="badge">Flask + OpenCV</span></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <a class="qr-shortcut" href="{{ url_for('main.qr_page') }}">Mostrar QR Code</a>
+      <span class="badge">Flask + OpenCV</span>
+    </div>
   </header>
 
   <main class="layout">
@@ -24,7 +27,7 @@
       </div>
       <div class="actions">
         <button id="btnStart" type="button">Abrir câmera</button>
-        <button id="btnCapture" type="button" disabled>Capturar e contar</button>
+        <button id="btnCapture" type="button" disabled>Capturar e contar pessoas</button>
       </div>
 
       <div class="divider"><span>ou</span></div>
@@ -33,46 +36,37 @@
           <input type="file" name="image" id="imageInput" accept="image/*" capture="environment">
           <span>Selecionar/tirar foto pelo celular</span>
         </label>
-        <button type="submit">Enviar foto e contar</button>
+        <button type="submit">Enviar foto e contar pessoas</button>
       </form>
-      <p class="hint">Dica: coloque os itens em fundo contrastante, com boa luz e o mínimo possível de sobreposição.</p>
+      <p class="hint">Dica: para melhor resultado, tire a foto de frente, com boa luz, e deixe os rostos visíveis.</p>
     </section>
 
     <section class="card controls-card">
-      <h2>2. Ajustes de leitura</h2>
+      <h2>2. Ajustes de detecção</h2>
       <form id="settingsForm" class="grid">
         <label>
-          Tipo de fundo/objeto
-          <select name="mode" id="mode">
-            <option value="dark">Objetos escuros em fundo claro</option>
-            <option value="light">Objetos claros em fundo escuro</option>
-            <option value="adaptive">Misturado / iluminação irregular</option>
+          Método de contagem
+          <select name="person_method" id="person_method">
+            <option value="faces" selected>Pessoas por rosto visível</option>
+            <option value="body">Pessoas por corpo inteiro - experimental</option>
           </select>
         </label>
         <label>
-          Área mínima
-          <input type="number" name="min_area" id="min_area" min="1" value="250">
+          Sensibilidade do rosto
+          <input type="number" name="scale_factor" id="scale_factor" min="1.01" max="1.50" step="0.01" value="1.08">
         </label>
         <label>
-          Área máxima
-          <input type="number" name="max_area" id="max_area" min="1" value="999999">
+          Confirmação mínima
+          <input type="number" name="min_neighbors" id="min_neighbors" min="1" max="20" value="5">
         </label>
         <label>
-          Suavização
-          <input type="range" name="blur" id="blur" min="1" max="31" step="2" value="5">
-        </label>
-        <label>
-          Limpeza da máscara
-          <input type="range" name="morph" id="morph" min="0" max="15" value="3">
-        </label>
-        <label>
-          Circularidade mínima
-          <input type="range" name="circularity" id="circularity" min="0" max="1" step="0.05" value="0">
+          Tamanho mínimo do rosto
+          <input type="number" name="min_size" id="min_size" min="10" max="500" value="35">
         </label>
       </form>
       <div class="mini-help">
-        <strong>Quando usar os ajustes:</strong><br>
-        Se contou sujeira/sombra, aumente a área mínima. Se ignorou itens pequenos, diminua a área mínima. Se a luz estiver ruim, teste “Misturado”.
+        <strong>Como ajustar:</strong><br>
+        Se não detectar pessoas, diminua a confirmação mínima ou o tamanho mínimo. Se detectar falso positivo, aumente a confirmação mínima. O modo por rosto é o mais leve para Railway.
       </div>
     </section>
 
@@ -80,21 +74,21 @@
       <h2>3. Resultado</h2>
       <div id="status" class="status idle">Aguardando foto...</div>
       <div class="countBox">
-        <span>Quantidade encontrada</span>
+        <span>Quantidade de pessoas encontrada</span>
         <strong id="count">0</strong>
       </div>
       <div class="result-grid">
         <div>
           <h3>Imagem marcada</h3>
-          <img id="resultImg" alt="Resultado com objetos marcados">
+          <img id="resultImg" alt="Resultado com pessoas marcadas">
         </div>
         <div>
-          <h3>Máscara de leitura</h3>
-          <img id="maskImg" alt="Máscara usada para contagem">
+          <h3>Área detectada</h3>
+          <img id="maskImg" alt="Área detectada na contagem">
         </div>
       </div>
       <details>
-        <summary>Ver detalhes dos itens</summary>
+        <summary>Ver detalhes das detecções</summary>
         <pre id="details">[]</pre>
       </details>
     </section>

@@ -2,7 +2,6 @@ import base64
 import io
 import socket
 import uuid
-from pathlib import Path
 
 import cv2
 import numpy as np
@@ -70,73 +69,83 @@ def resize_for_processing(img, max_width=1600):
     return resized, scale
 
 
-def count_objects(img, *, mode='dark', min_area=250, max_area=999999, blur=5, morph=3, circularity=0.0):
-    """Conta objetos por segmentação simples.
+def count_people_faces(img, *, scale_factor=1.08, min_neighbors=5, min_size=35):
+    """Conta pessoas pela detecção de rostos frontais/perfil usando Haar Cascade do OpenCV.
 
-    Funciona melhor quando o objeto tem contraste com o fundo e quando as peças não estão muito grudadas.
+    Observação: conta pessoas com rosto visível. Pessoas de costas, muito longe,
+    cobertas ou com rosto muito inclinado podem não ser detectadas.
     """
     working, scale = resize_for_processing(img)
     gray = cv2.cvtColor(working, cv2.COLOR_BGR2GRAY)
+    gray = cv2.equalizeHist(gray)
 
-    blur = int(blur)
-    if blur % 2 == 0:
-        blur += 1
-    blur = max(1, min(31, blur))
-    if blur > 1:
-        gray = cv2.GaussianBlur(gray, (blur, blur), 0)
+    frontal_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+    profile_path = cv2.data.haarcascades + 'haarcascade_profileface.xml'
+    frontal = cv2.CascadeClassifier(frontal_path)
+    profile = cv2.CascadeClassifier(profile_path)
 
-    if mode == 'light':
-        thresh_type = cv2.THRESH_BINARY + cv2.THRESH_OTSU
-    elif mode == 'adaptive':
-        mask = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                     cv2.THRESH_BINARY_INV, 41, 3)
-        thresh_type = None
-    else:
-        thresh_type = cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+    scale_factor = max(1.01, min(1.5, float(scale_factor)))
+    min_neighbors = max(1, min(20, int(min_neighbors)))
+    min_size = max(10, min(500, int(min_size)))
 
-    if mode != 'adaptive':
-        _, mask = cv2.threshold(gray, 0, 255, thresh_type)
+    detections = []
+    faces = frontal.detectMultiScale(
+        gray,
+        scaleFactor=scale_factor,
+        minNeighbors=min_neighbors,
+        minSize=(min_size, min_size),
+        flags=cv2.CASCADE_SCALE_IMAGE,
+    )
+    detections.extend([(int(x), int(y), int(w), int(h), 'rosto frontal') for (x, y, w, h) in faces])
 
-    morph = int(morph)
-    if morph > 0:
-        kernel = np.ones((morph, morph), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+    # Perfil direito/esquerdo. Usamos a imagem original e a imagem espelhada.
+    profiles = profile.detectMultiScale(
+        gray,
+        scaleFactor=scale_factor,
+        minNeighbors=max(3, min_neighbors),
+        minSize=(min_size, min_size),
+        flags=cv2.CASCADE_SCALE_IMAGE,
+    )
+    detections.extend([(int(x), int(y), int(w), int(h), 'perfil') for (x, y, w, h) in profiles])
 
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    flipped = cv2.flip(gray, 1)
+    profiles_flipped = profile.detectMultiScale(
+        flipped,
+        scaleFactor=scale_factor,
+        minNeighbors=max(3, min_neighbors),
+        minSize=(min_size, min_size),
+        flags=cv2.CASCADE_SCALE_IMAGE,
+    )
+    width = gray.shape[1]
+    for (x, y, w, h) in profiles_flipped:
+        detections.append((int(width - x - w), int(y), int(w), int(h), 'perfil'))
+
+    # Remove duplicados por sobreposição.
+    boxes = []
+    labels = []
+    for x, y, w, h, label in detections:
+        boxes.append([x, y, w, h])
+        labels.append(label)
+
+    if boxes:
+        # groupRectangles precisa de duplicatas para agrupar; aqui usamos NMS manual.
+        rects = np.array(boxes, dtype=float)
+        scores = np.array([w * h for x, y, w, h in boxes], dtype=float)
+        keep = non_max_suppression(rects, scores, overlap_thresh=0.35)
+        boxes = [boxes[i] for i in keep]
+        labels = [labels[i] for i in keep]
 
     overlay = working.copy()
     items = []
-    min_area = float(min_area)
-    max_area = float(max_area)
-    circularity = float(circularity)
+    for idx, ((x, y, w, h), label) in enumerate(zip(boxes, labels), start=1):
+        cx, cy = x + w // 2, y + h // 2
+        items.append({'tipo': label, 'x': x, 'y': y, 'w': w, 'h': h, 'cx': cx, 'cy': cy})
+        cv2.rectangle(overlay, (x, y), (x + w, y + h), (0, 180, 0), 3)
+        cv2.putText(overlay, f'Pessoa {idx}', (x, max(25, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (0, 0, 255), 2, cv2.LINE_AA)
 
-    for c in contours:
-        area = cv2.contourArea(c)
-        if area < min_area or area > max_area:
-            continue
-        perimeter = cv2.arcLength(c, True)
-        circ = 0.0 if perimeter == 0 else 4 * np.pi * area / (perimeter * perimeter)
-        if circ < circularity:
-            continue
-        x, y, w, h = cv2.boundingRect(c)
-        M = cv2.moments(c)
-        if M['m00'] != 0:
-            cx = int(M['m10'] / M['m00'])
-            cy = int(M['m01'] / M['m00'])
-        else:
-            cx, cy = x + w // 2, y + h // 2
-        items.append({'area': round(float(area), 2), 'x': x, 'y': y, 'w': w, 'h': h, 'cx': cx, 'cy': cy, 'circularity': round(float(circ), 3)})
-
-    # Ordena de cima para baixo, esquerda para direita, para numeração visual estável.
-    items.sort(key=lambda i: (i['cy'] // 80, i['cx']))
-
-    for idx, item in enumerate(items, start=1):
-        x, y, w, h = item['x'], item['y'], item['w'], item['h']
-        cx, cy = item['cx'], item['cy']
-        cv2.rectangle(overlay, (x, y), (x + w, y + h), (0, 180, 0), 2)
-        cv2.circle(overlay, (cx, cy), 5, (0, 0, 255), -1)
-        cv2.putText(overlay, str(idx), (x, max(20, y - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 255), 2, cv2.LINE_AA)
+    mask = np.zeros(gray.shape, dtype=np.uint8)
+    for x, y, w, h in boxes:
+        cv2.rectangle(mask, (x, y), (x + w, y + h), 255, -1)
 
     return {
         'count': len(items),
@@ -144,14 +153,80 @@ def count_objects(img, *, mode='dark', min_area=250, max_area=999999, blur=5, mo
         'overlay': overlay,
         'mask': mask,
         'scale': scale,
+        'method': 'rostos',
     }
 
 
+def count_people_bodies(img):
+    """Conta pessoas por corpo inteiro com HOG do OpenCV. Experimental."""
+    working, scale = resize_for_processing(img, max_width=1200)
+    hog = cv2.HOGDescriptor()
+    hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+    rects, weights = hog.detectMultiScale(
+        working,
+        winStride=(8, 8),
+        padding=(16, 16),
+        scale=1.05,
+    )
+    boxes = [[int(x), int(y), int(w), int(h)] for (x, y, w, h) in rects]
+    scores = np.array(weights).reshape(-1) if len(weights) else np.array([])
+    if boxes:
+        keep = non_max_suppression(np.array(boxes, dtype=float), scores if len(scores) else None, overlap_thresh=0.45)
+        boxes = [boxes[i] for i in keep]
+
+    overlay = working.copy()
+    items = []
+    for idx, (x, y, w, h) in enumerate(boxes, start=1):
+        cx, cy = x + w // 2, y + h // 2
+        items.append({'tipo': 'corpo', 'x': x, 'y': y, 'w': w, 'h': h, 'cx': cx, 'cy': cy})
+        cv2.rectangle(overlay, (x, y), (x + w, y + h), (0, 180, 0), 3)
+        cv2.putText(overlay, f'Pessoa {idx}', (x, max(25, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (0, 0, 255), 2, cv2.LINE_AA)
+
+    mask = np.zeros(working.shape[:2], dtype=np.uint8)
+    for x, y, w, h in boxes:
+        cv2.rectangle(mask, (x, y), (x + w, y + h), 255, -1)
+
+    return {
+        'count': len(items),
+        'items': items,
+        'overlay': overlay,
+        'mask': mask,
+        'scale': scale,
+        'method': 'corpo inteiro experimental',
+    }
+
+
+def non_max_suppression(boxes, scores=None, overlap_thresh=0.35):
+    """NMS simples para remover caixas duplicadas."""
+    if len(boxes) == 0:
+        return []
+    x1 = boxes[:, 0]
+    y1 = boxes[:, 1]
+    x2 = boxes[:, 0] + boxes[:, 2]
+    y2 = boxes[:, 1] + boxes[:, 3]
+    area = (x2 - x1 + 1) * (y2 - y1 + 1)
+    if scores is None or len(scores) != len(boxes):
+        scores = area
+    idxs = np.argsort(scores)
+    keep = []
+    while len(idxs) > 0:
+        last = len(idxs) - 1
+        i = idxs[last]
+        keep.append(int(i))
+        xx1 = np.maximum(x1[i], x1[idxs[:last]])
+        yy1 = np.maximum(y1[i], y1[idxs[:last]])
+        xx2 = np.minimum(x2[i], x2[idxs[:last]])
+        yy2 = np.minimum(y2[i], y2[idxs[:last]])
+        w = np.maximum(0, xx2 - xx1 + 1)
+        h = np.maximum(0, yy2 - yy1 + 1)
+        overlap = (w * h) / area[idxs[:last]]
+        idxs = np.delete(idxs, np.concatenate(([last], np.where(overlap > overlap_thresh)[0])))
+    return keep
 
 
 @bp.route('/health')
 def health():
-    return {'ok': True, 'service': 'contador-fotos-flask'}
+    return {'ok': True, 'service': 'contador-pessoas-flask'}
 
 
 @bp.route('/')
@@ -186,12 +261,10 @@ def qr_png():
 @bp.route('/analisar', methods=['POST'])
 def analisar():
     try:
-        mode = request.form.get('mode', 'dark')
-        min_area = request.form.get('min_area', 250)
-        max_area = request.form.get('max_area', 999999)
-        blur = request.form.get('blur', 5)
-        morph = request.form.get('morph', 3)
-        circularity = request.form.get('circularity', 0.0)
+        person_method = request.form.get('person_method', 'faces')
+        scale_factor = request.form.get('scale_factor', 1.08)
+        min_neighbors = request.form.get('min_neighbors', 5)
+        min_size = request.form.get('min_size', 35)
 
         if 'image_base64' in request.form and request.form['image_base64']:
             img = read_image_from_base64(request.form['image_base64'])
@@ -203,21 +276,31 @@ def analisar():
         else:
             return jsonify({'ok': False, 'error': 'Envie uma foto ou capture pela câmera.'}), 400
 
-        result = count_objects(img, mode=mode, min_area=min_area, max_area=max_area, blur=blur, morph=morph, circularity=circularity)
+        if person_method == 'body':
+            result = count_people_bodies(img)
+        else:
+            result = count_people_faces(img, scale_factor=scale_factor, min_neighbors=min_neighbors, min_size=min_size)
 
         base_name = uuid.uuid4().hex
-        result_path = current_app.config['RESULT_FOLDER'] / f'{base_name}_contado.jpg'
-        mask_path = current_app.config['RESULT_FOLDER'] / f'{base_name}_mascara.jpg'
+        result_path = current_app.config['RESULT_FOLDER'] / f'{base_name}_pessoas.jpg'
+        mask_path = current_app.config['RESULT_FOLDER'] / f'{base_name}_deteccao.jpg'
         cv2.imwrite(str(result_path), result['overlay'])
         cv2.imwrite(str(mask_path), result['mask'])
+
+        message = 'Contagem de pessoas feita.'
+        if result['method'] == 'rostos':
+            message += ' Este modo conta pessoas com rosto visível na imagem.'
+        else:
+            message += ' Modo de corpo inteiro é experimental e funciona melhor com pessoas em pé e corpo visível.'
 
         return jsonify({
             'ok': True,
             'count': result['count'],
             'items': result['items'],
+            'method': result['method'],
             'result_url': f'/resultado/{result_path.name}',
             'mask_url': f'/resultado/{mask_path.name}',
-            'message': 'Contagem feita. Ajuste a sensibilidade se algum item ficou de fora ou foi contado errado.'
+            'message': message,
         })
     except Exception as exc:
         return jsonify({'ok': False, 'error': str(exc)}), 500

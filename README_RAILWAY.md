@@ -1,4 +1,4 @@
-# Contador por Foto - Preparado para Railway
+# Contador de Pessoas por Foto - Preparado para Railway
 
 Este pacote já está pronto para subir no Railway.
 
