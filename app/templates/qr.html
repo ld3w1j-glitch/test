@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QR Code de Acesso</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="qr-body">
+  <main class="qr-page">
+    <section class="qr-card">
+      <div class="qr-header">
+        <span class="qr-pill">Acesso pelo celular</span>
+        <h1>Escaneie para abrir o contador</h1>
+        <p>Deixe o celular e o computador na mesma rede Wi-Fi.</p>
+      </div>
+
+      <img class="qr-img" src="{{ url_for('main.qr_png') }}?t={{ app_url }}" alt="QR Code para abrir o aplicativo">
+
+      <div class="qr-url">
+        <span>Link gerado:</span>
+        <strong>{{ app_url }}</strong>
+      </div>
+
+      <div class="qr-actions">
+        <a class="btn-link" href="{{ app_url }}">Abrir app neste navegador</a>
+        <a class="btn-link secondary" href="{{ url_for('main.index') }}">Ir para a tela principal</a>
+      </div>
+
+      <p class="qr-note">Se aparecer aviso de segurança no modo HTTPS, é por causa do certificado local temporário. Em rede própria, use “Avançado” e prossiga.</p>
+    </section>
+  </main>
+</body>
+</html>

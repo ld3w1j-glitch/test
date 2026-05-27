@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Contador por Foto</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Contador por Foto</h1>
+      <p>Use a câmera do celular ou envie uma imagem para contar objetos visíveis.</p>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><a class="qr-shortcut" href="{{ url_for('main.qr_page') }}">Mostrar QR Code</a><span class="badge">Flask + OpenCV</span></div>
+  </header>
+
+  <main class="layout">
+    <section class="card camera-card">
+      <h2>1. Foto</h2>
+      <div class="video-wrap">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="canvas" hidden></canvas>
+      </div>
+      <div class="actions">
+        <button id="btnStart" type="button">Abrir câmera</button>
+        <button id="btnCapture" type="button" disabled>Capturar e contar</button>
+      </div>
+
+      <div class="divider"><span>ou</span></div>
+      <form id="uploadForm">
+        <label class="filebox">
+          <input type="file" name="image" id="imageInput" accept="image/*" capture="environment">
+          <span>Selecionar/tirar foto pelo celular</span>
+        </label>
+        <button type="submit">Enviar foto e contar</button>
+      </form>
+      <p class="hint">Dica: coloque os itens em fundo contrastante, com boa luz e o mínimo possível de sobreposição.</p>
+    </section>
+
+    <section class="card controls-card">
+      <h2>2. Ajustes de leitura</h2>
+      <form id="settingsForm" class="grid">
+        <label>
+          Tipo de fundo/objeto
+          <select name="mode" id="mode">
+            <option value="dark">Objetos escuros em fundo claro</option>
+            <option value="light">Objetos claros em fundo escuro</option>
+            <option value="adaptive">Misturado / iluminação irregular</option>
+          </select>
+        </label>
+        <label>
+          Área mínima
+          <input type="number" name="min_area" id="min_area" min="1" value="250">
+        </label>
+        <label>
+          Área máxima
+          <input type="number" name="max_area" id="max_area" min="1" value="999999">
+        </label>
+        <label>
+          Suavização
+          <input type="range" name="blur" id="blur" min="1" max="31" step="2" value="5">
+        </label>
+        <label>
+          Limpeza da máscara
+          <input type="range" name="morph" id="morph" min="0" max="15" value="3">
+        </label>
+        <label>
+          Circularidade mínima
+          <input type="range" name="circularity" id="circularity" min="0" max="1" step="0.05" value="0">
+        </label>
+      </form>
+      <div class="mini-help">
+        <strong>Quando usar os ajustes:</strong><br>
+        Se contou sujeira/sombra, aumente a área mínima. Se ignorou itens pequenos, diminua a área mínima. Se a luz estiver ruim, teste “Misturado”.
+      </div>
+    </section>
+
+    <section class="card result-card">
+      <h2>3. Resultado</h2>
+      <div id="status" class="status idle">Aguardando foto...</div>
+      <div class="countBox">
+        <span>Quantidade encontrada</span>
+        <strong id="count">0</strong>
+      </div>
+      <div class="result-grid">
+        <div>
+          <h3>Imagem marcada</h3>
+          <img id="resultImg" alt="Resultado com objetos marcados">
+        </div>
+        <div>
+          <h3>Máscara de leitura</h3>
+          <img id="maskImg" alt="Máscara usada para contagem">
+        </div>
+      </div>
+      <details>
+        <summary>Ver detalhes dos itens</summary>
+        <pre id="details">[]</pre>
+      </details>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
