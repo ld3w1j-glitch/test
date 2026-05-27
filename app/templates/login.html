@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Login - Contador de Pessoas</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="login-body">
+  <form class="login-card" method="post">
+    <h1>Contador de Pessoas</h1>
+    <p>Acesse para usar a câmera e o histórico.</p>
+    {% if error %}<div class="alert">{{ error }}</div>{% endif %}
+    <label>Usuário</label>
+    <input name="username" autocomplete="username" required>
+    <label>Senha</label>
+    <input name="password" type="password" autocomplete="current-password" required>
+    <button type="submit">Entrar</button>
+    <small>Padrão: admin / admin</small>
+  </form>
+</body>
+</html>

@@ -1,311 +1,196 @@
-import base64
-import io
-import socket
-import uuid
+import os, base64, uuid, io
+from functools import wraps
+from urllib.parse import urljoin
 
 import cv2
 import numpy as np
 import qrcode
+from flask import Blueprint, render_template, request, redirect, url_for, session, jsonify, current_app, send_file
 from PIL import Image
-from flask import Blueprint, current_app, jsonify, render_template, request, send_file, send_from_directory
+from fpdf import FPDF
 
-bp = Blueprint('main', __name__)
+from .detector import detector
+from .storage import add_history, list_history, update_corrected, export_csv
 
-ALLOWED = {'png', 'jpg', 'jpeg', 'webp'}
+bp = Blueprint("main", __name__)
 
+def login_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not session.get("logged"):
+            return redirect(url_for("main.login"))
+        return fn(*args, **kwargs)
+    return wrapper
 
-def get_lan_ip() -> str:
-    """Tenta descobrir o IP da rede local para o celular acessar o app."""
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(('8.8.8.8', 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return '127.0.0.1'
+def public_url():
+    env = os.environ.get("PUBLIC_URL", "").strip().rstrip("/")
+    if env:
+        return env
+    return request.host_url.rstrip("/")
 
-
-def get_public_app_url() -> str:
-    """Monta o link que o celular deve abrir pelo QR Code.
-
-    Local: troca 127.0.0.1 pelo IP da rede.
-    Railway: usa o domínio HTTPS real recebido pelo proxy.
-    """
-    host_only = request.host.split(':')[0]
-    if host_only in {'127.0.0.1', 'localhost', '0.0.0.0'}:
-        port = request.host.split(':')[1] if ':' in request.host else ('443' if request.scheme == 'https' else '80')
-        return f'{request.scheme}://{get_lan_ip()}:{port}'
-    return request.url_root.rstrip('/')
-
-
-def allowed_file(filename: str) -> bool:
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED
-
-
-def read_image_from_file(file_storage):
-    data = np.frombuffer(file_storage.read(), dtype=np.uint8)
-    img = cv2.imdecode(data, cv2.IMREAD_COLOR)
-    if img is None:
-        raise ValueError('Não consegui ler a imagem enviada.')
-    return img
-
-
-def read_image_from_base64(data_url: str):
-    if ',' in data_url:
-        data_url = data_url.split(',', 1)[1]
-    data = base64.b64decode(data_url)
-    pil_img = Image.open(io.BytesIO(data)).convert('RGB')
-    img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
-    return img
-
-
-def resize_for_processing(img, max_width=1600):
-    h, w = img.shape[:2]
-    if w <= max_width:
-        return img, 1.0
-    scale = max_width / float(w)
-    resized = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
-    return resized, scale
-
-
-def count_people_faces(img, *, scale_factor=1.08, min_neighbors=5, min_size=35):
-    """Conta pessoas pela detecção de rostos frontais/perfil usando Haar Cascade do OpenCV.
-
-    Observação: conta pessoas com rosto visível. Pessoas de costas, muito longe,
-    cobertas ou com rosto muito inclinado podem não ser detectadas.
-    """
-    working, scale = resize_for_processing(img)
-    gray = cv2.cvtColor(working, cv2.COLOR_BGR2GRAY)
-    gray = cv2.equalizeHist(gray)
-
-    frontal_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-    profile_path = cv2.data.haarcascades + 'haarcascade_profileface.xml'
-    frontal = cv2.CascadeClassifier(frontal_path)
-    profile = cv2.CascadeClassifier(profile_path)
-
-    scale_factor = max(1.01, min(1.5, float(scale_factor)))
-    min_neighbors = max(1, min(20, int(min_neighbors)))
-    min_size = max(10, min(500, int(min_size)))
-
-    detections = []
-    faces = frontal.detectMultiScale(
-        gray,
-        scaleFactor=scale_factor,
-        minNeighbors=min_neighbors,
-        minSize=(min_size, min_size),
-        flags=cv2.CASCADE_SCALE_IMAGE,
-    )
-    detections.extend([(int(x), int(y), int(w), int(h), 'rosto frontal') for (x, y, w, h) in faces])
-
-    # Perfil direito/esquerdo. Usamos a imagem original e a imagem espelhada.
-    profiles = profile.detectMultiScale(
-        gray,
-        scaleFactor=scale_factor,
-        minNeighbors=max(3, min_neighbors),
-        minSize=(min_size, min_size),
-        flags=cv2.CASCADE_SCALE_IMAGE,
-    )
-    detections.extend([(int(x), int(y), int(w), int(h), 'perfil') for (x, y, w, h) in profiles])
-
-    flipped = cv2.flip(gray, 1)
-    profiles_flipped = profile.detectMultiScale(
-        flipped,
-        scaleFactor=scale_factor,
-        minNeighbors=max(3, min_neighbors),
-        minSize=(min_size, min_size),
-        flags=cv2.CASCADE_SCALE_IMAGE,
-    )
-    width = gray.shape[1]
-    for (x, y, w, h) in profiles_flipped:
-        detections.append((int(width - x - w), int(y), int(w), int(h), 'perfil'))
-
-    # Remove duplicados por sobreposição.
-    boxes = []
-    labels = []
-    for x, y, w, h, label in detections:
-        boxes.append([x, y, w, h])
-        labels.append(label)
-
-    if boxes:
-        # groupRectangles precisa de duplicatas para agrupar; aqui usamos NMS manual.
-        rects = np.array(boxes, dtype=float)
-        scores = np.array([w * h for x, y, w, h in boxes], dtype=float)
-        keep = non_max_suppression(rects, scores, overlap_thresh=0.35)
-        boxes = [boxes[i] for i in keep]
-        labels = [labels[i] for i in keep]
-
-    overlay = working.copy()
-    items = []
-    for idx, ((x, y, w, h), label) in enumerate(zip(boxes, labels), start=1):
-        cx, cy = x + w // 2, y + h // 2
-        items.append({'tipo': label, 'x': x, 'y': y, 'w': w, 'h': h, 'cx': cx, 'cy': cy})
-        cv2.rectangle(overlay, (x, y), (x + w, y + h), (0, 180, 0), 3)
-        cv2.putText(overlay, f'Pessoa {idx}', (x, max(25, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (0, 0, 255), 2, cv2.LINE_AA)
-
-    mask = np.zeros(gray.shape, dtype=np.uint8)
-    for x, y, w, h in boxes:
-        cv2.rectangle(mask, (x, y), (x + w, y + h), 255, -1)
-
-    return {
-        'count': len(items),
-        'items': items,
-        'overlay': overlay,
-        'mask': mask,
-        'scale': scale,
-        'method': 'rostos',
-    }
-
-
-def count_people_bodies(img):
-    """Conta pessoas por corpo inteiro com HOG do OpenCV. Experimental."""
-    working, scale = resize_for_processing(img, max_width=1200)
-    hog = cv2.HOGDescriptor()
-    hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
-    rects, weights = hog.detectMultiScale(
-        working,
-        winStride=(8, 8),
-        padding=(16, 16),
-        scale=1.05,
-    )
-    boxes = [[int(x), int(y), int(w), int(h)] for (x, y, w, h) in rects]
-    scores = np.array(weights).reshape(-1) if len(weights) else np.array([])
-    if boxes:
-        keep = non_max_suppression(np.array(boxes, dtype=float), scores if len(scores) else None, overlap_thresh=0.45)
-        boxes = [boxes[i] for i in keep]
-
-    overlay = working.copy()
-    items = []
-    for idx, (x, y, w, h) in enumerate(boxes, start=1):
-        cx, cy = x + w // 2, y + h // 2
-        items.append({'tipo': 'corpo', 'x': x, 'y': y, 'w': w, 'h': h, 'cx': cx, 'cy': cy})
-        cv2.rectangle(overlay, (x, y), (x + w, y + h), (0, 180, 0), 3)
-        cv2.putText(overlay, f'Pessoa {idx}', (x, max(25, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (0, 0, 255), 2, cv2.LINE_AA)
-
-    mask = np.zeros(working.shape[:2], dtype=np.uint8)
-    for x, y, w, h in boxes:
-        cv2.rectangle(mask, (x, y), (x + w, y + h), 255, -1)
-
-    return {
-        'count': len(items),
-        'items': items,
-        'overlay': overlay,
-        'mask': mask,
-        'scale': scale,
-        'method': 'corpo inteiro experimental',
-    }
-
-
-def non_max_suppression(boxes, scores=None, overlap_thresh=0.35):
-    """NMS simples para remover caixas duplicadas."""
-    if len(boxes) == 0:
-        return []
-    x1 = boxes[:, 0]
-    y1 = boxes[:, 1]
-    x2 = boxes[:, 0] + boxes[:, 2]
-    y2 = boxes[:, 1] + boxes[:, 3]
-    area = (x2 - x1 + 1) * (y2 - y1 + 1)
-    if scores is None or len(scores) != len(boxes):
-        scores = area
-    idxs = np.argsort(scores)
-    keep = []
-    while len(idxs) > 0:
-        last = len(idxs) - 1
-        i = idxs[last]
-        keep.append(int(i))
-        xx1 = np.maximum(x1[i], x1[idxs[:last]])
-        yy1 = np.maximum(y1[i], y1[idxs[:last]])
-        xx2 = np.minimum(x2[i], x2[idxs[:last]])
-        yy2 = np.minimum(y2[i], y2[idxs[:last]])
-        w = np.maximum(0, xx2 - xx1 + 1)
-        h = np.maximum(0, yy2 - yy1 + 1)
-        overlap = (w * h) / area[idxs[:last]]
-        idxs = np.delete(idxs, np.concatenate(([last], np.where(overlap > overlap_thresh)[0])))
-    return keep
-
-
-@bp.route('/health')
+@bp.route("/health")
 def health():
-    return {'ok': True, 'service': 'contador-pessoas-flask'}
+    return {"ok": True}
 
-
-@bp.route('/')
+@bp.route("/", methods=["GET"])
+@login_required
 def index():
-    return render_template('index.html', app_url=get_public_app_url())
+    return render_template("index.html", base_url=public_url())
 
+@bp.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        user = os.environ.get("APP_USER", "admin")
+        password = os.environ.get("APP_PASSWORD", "admin")
+        if request.form.get("username") == user and request.form.get("password") == password:
+            session["logged"] = True
+            return redirect(url_for("main.index"))
+        return render_template("login.html", error="Usuário ou senha inválidos.")
+    return render_template("login.html")
 
-@bp.route('/qr')
+@bp.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("main.login"))
+
+@bp.route("/qr")
+@login_required
 def qr_page():
-    app_url = get_public_app_url()
-    return render_template('qr.html', app_url=app_url)
+    return render_template("qr.html", base_url=public_url())
 
-
-@bp.route('/qr.png')
+@bp.route("/qr.png")
+@login_required
 def qr_png():
-    app_url = get_public_app_url()
-    qr = qrcode.QRCode(
-        version=None,
-        error_correction=qrcode.constants.ERROR_CORRECT_M,
-        box_size=14,
-        border=4,
-    )
-    qr.add_data(app_url)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color='black', back_color='white').convert('RGB')
-    buffer = io.BytesIO()
-    img.save(buffer, format='PNG')
-    buffer.seek(0)
-    return send_file(buffer, mimetype='image/png', max_age=0)
+    url = public_url()
+    img = qrcode.make(url)
+    bio = io.BytesIO()
+    img.save(bio, format="PNG")
+    bio.seek(0)
+    return send_file(bio, mimetype="image/png")
 
+def decode_image_from_request():
+    if "image" in request.files:
+        file = request.files["image"]
+        data = np.frombuffer(file.read(), np.uint8)
+        image = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        return image
 
-@bp.route('/analisar', methods=['POST'])
-def analisar():
+    payload = request.get_json(silent=True) or {}
+    data_url = payload.get("image", "")
+    if "," in data_url:
+        data_url = data_url.split(",", 1)[1]
+    raw = base64.b64decode(data_url)
+    data = np.frombuffer(raw, np.uint8)
+    image = cv2.imdecode(data, cv2.IMREAD_COLOR)
+    return image
+
+@bp.route("/api/detect_frame", methods=["POST"])
+@login_required
+def detect_frame():
     try:
-        person_method = request.form.get('person_method', 'faces')
-        scale_factor = request.form.get('scale_factor', 1.08)
-        min_neighbors = request.form.get('min_neighbors', 5)
-        min_size = request.form.get('min_size', 35)
+        image = decode_image_from_request()
+        if image is None:
+            return jsonify({"ok": False, "error": "Imagem inválida."}), 400
 
-        if 'image_base64' in request.form and request.form['image_base64']:
-            img = read_image_from_base64(request.form['image_base64'])
-        elif 'image' in request.files and request.files['image'].filename:
-            f = request.files['image']
-            if not allowed_file(f.filename):
-                return jsonify({'ok': False, 'error': 'Formato inválido. Use PNG, JPG, JPEG ou WEBP.'}), 400
-            img = read_image_from_file(f)
-        else:
-            return jsonify({'ok': False, 'error': 'Envie uma foto ou capture pela câmera.'}), 400
+        mode = request.args.get("mode", "auto")
+        result = detector.detect(image, mode=mode, draw=False)
+        return jsonify({
+            "ok": True,
+            "count": result["count"],
+            "boxes": result["boxes"]
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
-        if person_method == 'body':
-            result = count_people_bodies(img)
-        else:
-            result = count_people_faces(img, scale_factor=scale_factor, min_neighbors=min_neighbors, min_size=min_size)
+@bp.route("/api/upload_detect", methods=["POST"])
+@login_required
+def upload_detect():
+    try:
+        image = decode_image_from_request()
+        if image is None:
+            return jsonify({"ok": False, "error": "Imagem inválida."}), 400
 
-        base_name = uuid.uuid4().hex
-        result_path = current_app.config['RESULT_FOLDER'] / f'{base_name}_pessoas.jpg'
-        mask_path = current_app.config['RESULT_FOLDER'] / f'{base_name}_deteccao.jpg'
-        cv2.imwrite(str(result_path), result['overlay'])
-        cv2.imwrite(str(mask_path), result['mask'])
+        mode = request.form.get("mode") or (request.get_json(silent=True) or {}).get("mode", "auto")
+        result = detector.detect(image, mode=mode, draw=True)
 
-        message = 'Contagem de pessoas feita.'
-        if result['method'] == 'rostos':
-            message += ' Este modo conta pessoas com rosto visível na imagem.'
-        else:
-            message += ' Modo de corpo inteiro é experimental e funciona melhor com pessoas em pé e corpo visível.'
+        name = str(uuid.uuid4())
+        original_file = f"{name}_original.jpg"
+        processed_file = f"{name}_processado.jpg"
+        original_path = os.path.join(current_app.config["UPLOAD_FOLDER"], original_file)
+        processed_path = os.path.join(current_app.config["PROCESSED_FOLDER"], processed_file)
+
+        cv2.imwrite(original_path, image)
+        cv2.imwrite(processed_path, result["annotated"])
+
+        item_id = add_history(
+            count=result["count"],
+            mode=mode,
+            original_file=f"uploads/{original_file}",
+            processed_file=f"processed/{processed_file}",
+            note=""
+        )
 
         return jsonify({
-            'ok': True,
-            'count': result['count'],
-            'items': result['items'],
-            'method': result['method'],
-            'result_url': f'/resultado/{result_path.name}',
-            'mask_url': f'/resultado/{mask_path.name}',
-            'message': message,
+            "ok": True,
+            "id": item_id,
+            "count": result["count"],
+            "processed_url": url_for("static", filename=f"processed/{processed_file}")
         })
-    except Exception as exc:
-        return jsonify({'ok': False, 'error': str(exc)}), 500
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
+@bp.route("/history")
+@login_required
+def history():
+    return render_template("history.html", rows=list_history())
 
-@bp.route('/resultado/<path:filename>')
-def resultado(filename):
-    return send_from_directory(current_app.config['RESULT_FOLDER'], filename)
+@bp.route("/history/<int:item_id>/correct", methods=["POST"])
+@login_required
+def correct(item_id):
+    corrected = request.form.get("corrected_count", "0")
+    note = request.form.get("note", "")
+    update_corrected(item_id, corrected, note)
+    return redirect(url_for("main.history"))
+
+@bp.route("/export.csv")
+@login_required
+def export_csv_route():
+    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "historico.csv")
+    export_csv(path)
+    return send_file(path, as_attachment=True, download_name="historico_contagem_pessoas.csv")
+
+@bp.route("/report.pdf")
+@login_required
+def report_pdf():
+    rows = list_history(100)
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, "Relatorio de Contagem de Pessoas", ln=True)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(0, 8, f"Total de registros: {len(rows)}", ln=True)
+    pdf.ln(4)
+
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(12, 8, "ID", 1)
+    pdf.cell(38, 8, "Data", 1)
+    pdf.cell(25, 8, "Detectado", 1)
+    pdf.cell(25, 8, "Corrigido", 1)
+    pdf.cell(25, 8, "Modo", 1)
+    pdf.cell(65, 8, "Obs", 1)
+    pdf.ln()
+
+    pdf.set_font("Helvetica", "", 8)
+    for r in rows:
+        pdf.cell(12, 7, str(r["id"]), 1)
+        pdf.cell(38, 7, str(r["created_at"])[:19], 1)
+        pdf.cell(25, 7, str(r["count"]), 1)
+        pdf.cell(25, 7, "" if r["corrected_count"] is None else str(r["corrected_count"]), 1)
+        pdf.cell(25, 7, str(r["mode"] or ""), 1)
+        obs = str(r["note"] or "")[:38]
+        pdf.cell(65, 7, obs, 1)
+        pdf.ln()
+
+    bio = io.BytesIO(bytes(pdf.output(dest="S")))
+    bio.seek(0)
+    return send_file(bio, as_attachment=True, download_name="relatorio_contagem_pessoas.pdf", mimetype="application/pdf")

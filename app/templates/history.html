@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h1>Histórico</h1>
+  <div class="actions">
+    <a class="button-link" href="{{ url_for('main.export_csv_route') }}">Baixar CSV</a>
+    <a class="button-link" href="{{ url_for('main.report_pdf') }}">Baixar PDF</a>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Data</th>
+          <th>Detectado</th>
+          <th>Corrigido</th>
+          <th>Modo</th>
+          <th>Imagem</th>
+          <th>Corrigir</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td>{{ r.id }}</td>
+          <td>{{ r.created_at }}</td>
+          <td>{{ r.count }}</td>
+          <td>{{ r.corrected_count if r.corrected_count is not none else "-" }}</td>
+          <td>{{ r.mode }}</td>
+          <td>
+            {% if r.processed_file %}
+              <a href="{{ url_for('static', filename=r.processed_file) }}" target="_blank">ver</a>
+            {% endif %}
+          </td>
+          <td>
+            <form method="post" action="{{ url_for('main.correct', item_id=r.id) }}" class="inline-form">
+              <input name="corrected_count" type="number" min="0" placeholder="Qtd" value="{{ r.corrected_count or '' }}">
+              <input name="note" placeholder="Obs" value="{{ r.note or '' }}">
+              <button>Salvar</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

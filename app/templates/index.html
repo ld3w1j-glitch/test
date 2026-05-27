@@ -1,99 +1,49 @@
-<!doctype html>
-<html lang="pt-br">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Contador de Pessoas por Foto</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
-<body>
-  <header class="topbar">
-    <div>
-      <h1>Contador de Pessoas por Foto</h1>
-      <p>Use a câmera do celular ou envie uma imagem para contar apenas pessoas.</p>
+{% extends "base.html" %}
+{% block content %}
+<section class="grid">
+  <div class="card camera-card">
+    <h1>Câmera ao vivo</h1>
+    <p class="muted">Abra pelo celular, permita a câmera e clique em iniciar.</p>
+
+    <div class="controls">
+      <select id="mode">
+        <option value="auto">Automático: corpo + rosto</option>
+        <option value="body">Corpo inteiro</option>
+        <option value="face">Rosto visível</option>
+      </select>
+      <button id="startBtn">Iniciar câmera</button>
+      <button id="stopBtn" disabled>Parar</button>
+      <button id="saveBtn" disabled>Salvar leitura</button>
     </div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-      <a class="qr-shortcut" href="{{ url_for('main.qr_page') }}">Mostrar QR Code</a>
-      <span class="badge">Flask + OpenCV</span>
+
+    <div class="video-wrap">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="overlay"></canvas>
     </div>
-  </header>
 
-  <main class="layout">
-    <section class="card camera-card">
-      <h2>1. Foto</h2>
-      <div class="video-wrap">
-        <video id="video" autoplay playsinline muted></video>
-        <canvas id="canvas" hidden></canvas>
-      </div>
-      <div class="actions">
-        <button id="btnStart" type="button">Abrir câmera</button>
-        <button id="btnCapture" type="button" disabled>Capturar e contar pessoas</button>
-      </div>
+    <div class="big-count">
+      <span>Pessoas agora</span>
+      <strong id="count">0</strong>
+    </div>
 
-      <div class="divider"><span>ou</span></div>
-      <form id="uploadForm">
-        <label class="filebox">
-          <input type="file" name="image" id="imageInput" accept="image/*" capture="environment">
-          <span>Selecionar/tirar foto pelo celular</span>
-        </label>
-        <button type="submit">Enviar foto e contar pessoas</button>
-      </form>
-      <p class="hint">Dica: para melhor resultado, tire a foto de frente, com boa luz, e deixe os rostos visíveis.</p>
-    </section>
+    <div id="status" class="status">Aguardando início.</div>
+  </div>
 
-    <section class="card controls-card">
-      <h2>2. Ajustes de detecção</h2>
-      <form id="settingsForm" class="grid">
-        <label>
-          Método de contagem
-          <select name="person_method" id="person_method">
-            <option value="faces" selected>Pessoas por rosto visível</option>
-            <option value="body">Pessoas por corpo inteiro - experimental</option>
-          </select>
-        </label>
-        <label>
-          Sensibilidade do rosto
-          <input type="number" name="scale_factor" id="scale_factor" min="1.01" max="1.50" step="0.01" value="1.08">
-        </label>
-        <label>
-          Confirmação mínima
-          <input type="number" name="min_neighbors" id="min_neighbors" min="1" max="20" value="5">
-        </label>
-        <label>
-          Tamanho mínimo do rosto
-          <input type="number" name="min_size" id="min_size" min="10" max="500" value="35">
-        </label>
-      </form>
-      <div class="mini-help">
-        <strong>Como ajustar:</strong><br>
-        Se não detectar pessoas, diminua a confirmação mínima ou o tamanho mínimo. Se detectar falso positivo, aumente a confirmação mínima. O modo por rosto é o mais leve para Railway.
-      </div>
-    </section>
+  <div class="card">
+    <h2>Upload de foto</h2>
+    <p class="muted">Use se a câmera ao vivo não abrir.</p>
+    <input id="fileInput" type="file" accept="image/*" capture="environment">
+    <button id="uploadBtn">Enviar e contar</button>
+    <div id="uploadResult"></div>
+  </div>
 
-    <section class="card result-card">
-      <h2>3. Resultado</h2>
-      <div id="status" class="status idle">Aguardando foto...</div>
-      <div class="countBox">
-        <span>Quantidade de pessoas encontrada</span>
-        <strong id="count">0</strong>
-      </div>
-      <div class="result-grid">
-        <div>
-          <h3>Imagem marcada</h3>
-          <img id="resultImg" alt="Resultado com pessoas marcadas">
-        </div>
-        <div>
-          <h3>Área detectada</h3>
-          <img id="maskImg" alt="Área detectada na contagem">
-        </div>
-      </div>
-      <details>
-        <summary>Ver detalhes das detecções</summary>
-        <pre id="details">[]</pre>
-      </details>
-    </section>
-  </main>
+  <div class="card">
+    <h2>Acesso pelo celular</h2>
+    <p>Abra o QR Code e leia com o celular.</p>
+    <a class="button-link" href="{{ url_for('main.qr_page') }}">Mostrar QR Code</a>
+    <p class="small">URL atual: {{ base_url }}</p>
+  </div>
+</section>
 
-  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
-</body>
-</html>
+<script src="{{ url_for('static', filename='js/realtime.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,4 @@
+# Use este arquivo só se o servidor tiver mais memória/CPU.
+# No Railway plano pequeno pode ficar pesado.
+-r requirements.txt
+ultralytics==8.3.40

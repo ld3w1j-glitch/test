@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ title or "Contador de Pessoas" }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <strong>Contador de Pessoas</strong>
+      <span>tempo real</span>
+    </div>
+    <nav>
+      <a href="{{ url_for('main.index') }}">Câmera</a>
+      <a href="{{ url_for('main.history') }}">Histórico</a>
+      <a href="{{ url_for('main.qr_page') }}">QR Code</a>
+      <a href="{{ url_for('main.logout') }}">Sair</a>
+    </nav>
+  </header>
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

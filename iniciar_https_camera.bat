@@ -1,20 +1,7 @@
 @echo off
-chcp 65001 >nul
-title Contador por Foto - HTTPS Camera com QR Code
-
-if not exist .venv\Scripts\python.exe (
-    echo Ambiente virtual nao encontrado. Executando instalador...
-    call INSTALAR_WINDOWS.bat
-)
-
+chcp 65001 > nul
 call .venv\Scripts\activate
-python -c "import cv2" >nul 2>&1
-if errorlevel 1 (
-    echo OpenCV/cv2 nao encontrado. Instalando dependencias agora...
-    python -m pip install --upgrade pip setuptools wheel
-    pip install -r requirements.txt
-)
-
-set OPEN_QR=1
-python run_https.py
+echo Abrindo em HTTPS local. O navegador pode dizer que nao e seguro.
+echo Isso e normal em certificado local.
+python -c "from app import create_app; app=create_app(); app.run(host='0.0.0.0', port=5443, ssl_context='adhoc', debug=True)"
 pause
